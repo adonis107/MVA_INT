@@ -1,0 +1,28 @@
+# Folders
+.venv/
+files/
+
+# Notes
+*.md
+!README.md
+
+# Python files
+__pycache__/
+*.pyc
+
+# Latex files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.nav
+*.snm
+*.fls
+*.fdb_latexmk
+*.run.xml
+*.xsim
+*/output/
