@@ -30,7 +30,7 @@ def build_policy(encoder_config: EncoderConfig, training_config: TrainingConfig)
     return MeanFieldPolicy(encoder=encoder, hidden_dims=training_config.hidden_dims)
 
 
-def build_algorithm_6_networks(
+def build_global_bsde_networks(
     encoder_config: EncoderConfig,
     training_config: TrainingConfig,
 ) -> tuple[MeanFieldInitialValue, MeanFieldProcess]:
@@ -77,15 +77,7 @@ def train_global_dp(
     return policy, losses
 
 
-def train_pham_warin_algorithm_1(
-    config: SystemicRiskConfig,
-    encoder_config: EncoderConfig,
-    training_config: TrainingConfig,
-) -> tuple[MeanFieldPolicy, list[float]]:
-    return train_global_dp(config, encoder_config, training_config)
-
-
-def algorithm_6_loss(
+def global_bsde_loss(
     initial_value_network: MeanFieldInitialValue,
     process_network: MeanFieldProcess,
     initial_states: Tensor,
@@ -119,7 +111,7 @@ def algorithm_6_loss(
     return (current_adjoint - terminal_target).square().mean()
 
 
-def run_algorithm_6_step(
+def run_global_bsde_step(
     initial_value_network: MeanFieldInitialValue,
     process_network: MeanFieldProcess,
     optimizer: torch.optim.Optimizer,
@@ -136,19 +128,19 @@ def run_algorithm_6_step(
         dtype=dtype,
     )
     optimizer.zero_grad(set_to_none=True)
-    loss = algorithm_6_loss(initial_value_network, process_network, initial_states, config)
+    loss = global_bsde_loss(initial_value_network, process_network, initial_states, config)
     loss.backward()
     optimizer.step()
     return float(loss.detach().cpu())
 
 
-def train_pham_warin_algorithm_6(
+def train_global_bsde(
     config: SystemicRiskConfig,
     encoder_config: EncoderConfig,
     training_config: TrainingConfig,
 ) -> tuple[tuple[MeanFieldInitialValue, MeanFieldProcess], list[float]]:
     set_seed(training_config.seed)
-    initial_value_network, process_network = build_algorithm_6_networks(encoder_config, training_config)
+    initial_value_network, process_network = build_global_bsde_networks(encoder_config, training_config)
     dtype = getattr(torch, config.dtype)
     initial_value_network = initial_value_network.to(device=config.device, dtype=dtype)
     process_network = process_network.to(device=config.device, dtype=dtype)
@@ -158,11 +150,11 @@ def train_pham_warin_algorithm_6(
     )
     losses: list[float] = []
     for _ in range(training_config.iterations):
-        losses.append(run_algorithm_6_step(initial_value_network, process_network, optimizer, config, training_config))
+        losses.append(run_global_bsde_step(initial_value_network, process_network, optimizer, config, training_config))
     return (initial_value_network, process_network), losses
 
 
-def evaluate_algorithm_6_policy(
+def evaluate_global_bsde_policy(
     networks: tuple[MeanFieldInitialValue, MeanFieldProcess],
     initial_states: Tensor,
     config: SystemicRiskConfig,

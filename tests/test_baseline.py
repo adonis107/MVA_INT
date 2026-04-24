@@ -14,21 +14,21 @@ if str(SRC) not in sys.path:
 from mfnn_control import (
     ABMConfig,
     EncoderConfig,
+    PhamWarinBenchmarkProfile,
     SystemicRiskConfig,
-    Table28PrepProfile,
     TrainingConfig,
-    build_algorithm_6_networks,
+    build_global_bsde_networks,
     build_policy,
     case_variance,
     core_periphery_graph_weights,
     erdos_renyi_graph_weights,
     estimate_critical_q,
     homogeneous_graph_weights,
+    pham_warin_benchmark_output_schema,
     rollout_abm,
-    run_algorithm_6_step,
+    run_global_bsde_step,
     run_training_step,
     sample_initial_states_with_dim,
-    table28_prep_output_schema,
 )
 from mfnn_control.encoders import BinDensityEncoder, CylindricalEncoder
 
@@ -74,15 +74,15 @@ class TrainingTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(torch.tensor(loss)))
         self.assertGreater(loss, 0.0)
 
-    def test_algorithm_6_step_returns_finite_loss(self) -> None:
+    def test_global_bsde_step_returns_finite_loss(self) -> None:
         config = SystemicRiskConfig(steps=6, particles=24)
         training_config = TrainingConfig(iterations=1, batch_size=4)
-        initial_value_network, process_network = build_algorithm_6_networks(EncoderConfig(kind="cylindrical"), training_config)
+        initial_value_network, process_network = build_global_bsde_networks(EncoderConfig(kind="cylindrical"), training_config)
         optimizer = torch.optim.Adam(
             list(initial_value_network.parameters()) + list(process_network.parameters()),
             lr=training_config.learning_rate,
         )
-        loss = run_algorithm_6_step(initial_value_network, process_network, optimizer, config, training_config)
+        loss = run_global_bsde_step(initial_value_network, process_network, optimizer, config, training_config)
         self.assertTrue(torch.isfinite(torch.tensor(loss)))
         self.assertGreaterEqual(loss, 0.0)
 
@@ -110,9 +110,9 @@ class TrainingTests(unittest.TestCase):
         states = sample_initial_states_with_dim("case_4", 2, 10, 2, device="cpu", dtype=torch.float32)
         self.assertEqual(states.shape, (2, 10, 2))
 
-    def test_table28_profile_and_schema(self) -> None:
-        profile = Table28PrepProfile()
-        schema = table28_prep_output_schema()
+    def test_pham_warin_benchmark_profile_and_schema(self) -> None:
+        profile = PhamWarinBenchmarkProfile()
+        schema = pham_warin_benchmark_output_schema()
         self.assertEqual(profile.state_dim, 2)
         self.assertIn("profile", schema)
         self.assertIn("run_grid", schema)

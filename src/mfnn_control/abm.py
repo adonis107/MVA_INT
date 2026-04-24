@@ -13,7 +13,7 @@ class ABMConfig:
     horizon: float = 0.2
     steps: int = 20
     sigma: float = 1.0
-    interaction_q: float = 0.8
+    interaction_q: float = 0.6
     state_dim: int = 1
     default_threshold: float = -0.5
 

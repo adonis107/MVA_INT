@@ -29,7 +29,7 @@ from mfnn_control import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", default="results/checkpoints/systemic_risk_alg1_bins_case_1_seed7.pt")
+    parser.add_argument("--checkpoint", default="results/checkpoints/systemic_risk_global_dp_bins_case_1_seed7.pt")
     parser.add_argument("--output-dir", default="results/abm")
     parser.add_argument("--case", default="case_1")
     parser.add_argument("--device", default="cpu")
@@ -315,6 +315,7 @@ def experiment_4_phase_transition(
     state_dim: int,
     device: str,
     policy: torch.nn.Module,
+    topologies: dict[str, torch.Tensor],
     phase_sigma: float = 0.1,
     phase_threshold: float = 0.0,
     phase_initial_mean: float = 0.5,
@@ -323,57 +324,65 @@ def experiment_4_phase_transition(
     phase_stress_fraction: float = 0.1,
     phase_stress_value: float = -5.0,
 ) -> dict[str, object]:
-    weights = homogeneous_graph_weights(agents, device=device)
     n_stressed = max(1, int(agents * phase_stress_fraction))
     n_healthy = agents - n_stressed
-    uncontrolled = []
-    controlled = []
-    for q in q_sweep:
-        cfg = ABMConfig(
-            horizon=phase_horizon,
-            steps=phase_steps,
-            sigma=phase_sigma,
-            interaction_q=q,
-            state_dim=state_dim,
-            default_threshold=phase_threshold,
-        )
-        healthy = torch.randn(mc_paths, n_healthy, state_dim, device=device) * 0.05 + phase_initial_mean
-        stressed = torch.randn(mc_paths, n_stressed, state_dim, device=device) * 0.05 + phase_stress_value
-        x0 = torch.cat([healthy, stressed], dim=1)
-        initial_defaulted = (x0 < cfg.default_threshold).any(dim=-1)
-        sim_unc = rollout_abm(x0, cfg, weights, policy=None)
-        sim_ctl = rollout_abm(x0, cfg, weights, policy=policy)
-        unc_add = (sim_unc.defaulted.float().sum(dim=1) - initial_defaulted.float().sum(dim=1)).clamp_min(0.0)
-        ctl_add = (sim_ctl.defaulted.float().sum(dim=1) - initial_defaulted.float().sum(dim=1)).clamp_min(0.0)
-        uncontrolled.append({
-            "q": float(q),
-            "cascade_rate": float((unc_add > 0).float().mean().item()),
-            "mean_cascade_size": float(unc_add.mean().item()),
-            "cascade_size_distribution": [float(v) for v in unc_add.cpu().tolist()],
-        })
-        controlled.append({
-            "q": float(q),
-            "cascade_rate": float((ctl_add > 0).float().mean().item()),
-            "mean_cascade_size": float(ctl_add.mean().item()),
-            "cascade_size_distribution": [float(v) for v in ctl_add.cpu().tolist()],
-        })
-    unc_rates = [row["cascade_rate"] for row in uncontrolled]
-    ctl_rates = [row["cascade_rate"] for row in controlled]
-    half = 0.5
-    critical_q_unc = next((q_sweep[i] for i, r in enumerate(unc_rates) if r >= half), None)
-    critical_q_ctl = next((q_sweep[i] for i, r in enumerate(ctl_rates) if r >= half), None)
-    return {
-        "uncontrolled": uncontrolled,
-        "controlled": controlled,
-        "critical_q_uncontrolled": critical_q_unc,
-        "critical_q_controlled": critical_q_ctl,
-    }
+    results_by_topology: dict[str, object] = {}
+    for topo_name, weights in topologies.items():
+        uncontrolled = []
+        controlled = []
+        for q in q_sweep:
+            cfg = ABMConfig(
+                horizon=phase_horizon,
+                steps=phase_steps,
+                sigma=phase_sigma,
+                interaction_q=q,
+                state_dim=state_dim,
+                default_threshold=phase_threshold,
+            )
+            healthy = torch.randn(mc_paths, n_healthy, state_dim, device=device) * 0.05 + phase_initial_mean
+            stressed = torch.randn(mc_paths, n_stressed, state_dim, device=device) * 0.05 + phase_stress_value
+            x0 = torch.cat([healthy, stressed], dim=1)
+            initial_defaulted = (x0 < cfg.default_threshold).any(dim=-1)
+            sim_unc = rollout_abm(x0, cfg, weights, policy=None)
+            sim_ctl = rollout_abm(x0, cfg, weights, policy=policy)
+            unc_add = (sim_unc.defaulted.float().sum(dim=1) - initial_defaulted.float().sum(dim=1)).clamp_min(0.0)
+            ctl_add = (sim_ctl.defaulted.float().sum(dim=1) - initial_defaulted.float().sum(dim=1)).clamp_min(0.0)
+            uncontrolled.append({
+                "q": float(q),
+                "cascade_rate": float((unc_add > 0).float().mean().item()),
+                "mean_cascade_size": float(unc_add.mean().item()),
+                "cascade_size_distribution": [float(v) for v in unc_add.cpu().tolist()],
+            })
+            controlled.append({
+                "q": float(q),
+                "cascade_rate": float((ctl_add > 0).float().mean().item()),
+                "mean_cascade_size": float(ctl_add.mean().item()),
+                "cascade_size_distribution": [float(v) for v in ctl_add.cpu().tolist()],
+            })
+        unc_rates = [row["cascade_rate"] for row in uncontrolled]
+        ctl_rates = [row["cascade_rate"] for row in controlled]
+        half = 0.5
+        critical_q_unc = next((q_sweep[i] for i, r in enumerate(unc_rates) if r >= half), None)
+        critical_q_ctl = next((q_sweep[i] for i, r in enumerate(ctl_rates) if r >= half), None)
+        results_by_topology[topo_name] = {
+            "uncontrolled": uncontrolled,
+            "controlled": controlled,
+            "critical_q_uncontrolled": critical_q_unc,
+            "critical_q_controlled": critical_q_ctl,
+        }
+    return results_by_topology
 
 
 def run_all_experiments(args: argparse.Namespace) -> dict[str, object]:
     torch.manual_seed(args.seed)
     device = args.device
     checkpoint_path = (ROOT / args.checkpoint).resolve() if not Path(args.checkpoint).is_absolute() else Path(args.checkpoint)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(
+            f"Checkpoint not found: {checkpoint_path}\n"
+            "Train a model first by running:\n"
+            "  python scripts/train_systemic_risk_baseline.py --algorithm global_dp --save-dir results/checkpoints"
+        )
     policy = load_policy_from_checkpoint(checkpoint_path, device)
     topologies = build_topologies(args.agents, args.core_hubs, args.er_p, device)
     q_values = torch.linspace(args.q_min, args.q_max, args.q_steps).tolist()
@@ -442,6 +451,7 @@ def run_all_experiments(args: argparse.Namespace) -> dict[str, object]:
         args.state_dim,
         device,
         policy,
+        topologies,
         phase_sigma=args.phase_sigma,
         phase_threshold=args.phase_threshold,
         phase_initial_mean=args.phase_initial_mean,

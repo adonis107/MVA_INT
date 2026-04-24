@@ -17,22 +17,22 @@ import torch
 
 from mfnn_control import (
     EncoderConfig,
+    PhamWarinBenchmarkProfile,
     SystemicRiskConfig,
-    Table28PrepProfile,
     TrainingConfig,
     estimate_critical_q,
-    evaluate_algorithm_6_policy,
+    evaluate_global_bsde_policy,
+    pham_warin_benchmark_output_schema,
     sample_initial_states_with_dim,
     systemic_risk_value,
-    table28_prep_output_schema,
-    train_pham_warin_algorithm_1,
-    train_pham_warin_algorithm_6,
+    train_global_bsde,
+    train_global_dp,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--algorithm", choices=("1", "6"), default="1")
+    parser.add_argument("--algorithm", choices=("global_dp", "global_bsde"), default="global_dp")
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--encoder", choices=("cylindrical", "bins"), default="cylindrical")
     parser.add_argument("--iterations", type=int, default=200)
@@ -54,8 +54,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--default-threshold", type=float, default=-0.5)
     parser.add_argument("--target-default-rate", type=float, default=0.5)
     parser.add_argument("--mc-paths", type=int, default=256)
-    parser.add_argument("--table28-scaffold", action="store_true")
-    parser.add_argument("--table28-profile", action="store_true")
+    parser.add_argument("--benchmark-scaffold", action="store_true")
+    parser.add_argument("--benchmark-profile", action="store_true")
     return parser.parse_args()
 
 
@@ -95,7 +95,7 @@ def save_checkpoint(
 ) -> str:
     output_dir = Path(save_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{save_prefix}_alg{algorithm}_{encoder_config.kind}_{training_config.initial_case}_seed{seed}.pt"
+    path = output_dir / f"{save_prefix}_{algorithm}_{encoder_config.kind}_{training_config.initial_case}_seed{seed}.pt"
     payload = {
         "algorithm": algorithm,
         "seed": seed,
@@ -103,7 +103,7 @@ def save_checkpoint(
         "encoder_config": asdict(encoder_config),
         "training_config": asdict(training_config),
     }
-    if algorithm == "1":
+    if algorithm == "global_dp":
         payload["policy_state_dict"] = trained.state_dict()
     else:
         initial_value_network, process_network = trained
@@ -136,22 +136,23 @@ def run_single_experiment(
     _prepare_memory_tracking(args.device)
     start = time.perf_counter()
     checkpoint_path = ""
-    if algorithm == "1":
-        trained, losses = train_pham_warin_algorithm_1(config, encoder_config, training_config)
+    if algorithm == "global_dp":
+        trained, losses = train_global_dp(config, encoder_config, training_config)
         objective_name = "global_control_cost"
         estimated_value = float(losses[-1])
         induced_cost = None
     else:
-        trained, losses = train_pham_warin_algorithm_6(config, encoder_config, training_config)
+        trained, losses = train_global_bsde(config, encoder_config, training_config)
+        eval_batch_size = max(512, training_config.batch_size)
         initial_states = sample_initial_states_with_dim(
             args.case,
-            training_config.batch_size,
+            eval_batch_size,
             config.particles,
             config.state_dim,
             device=config.device,
             dtype=getattr(torch, config.dtype),
         )
-        induced = evaluate_algorithm_6_policy(trained, initial_states, config)
+        induced = evaluate_global_bsde_policy(trained, initial_states, config)
         induced_cost = float(induced.detach().cpu())
         estimated_value = induced_cost
         objective_name = "terminal_adjoint_mse"
@@ -221,8 +222,8 @@ def main() -> None:
     args = parse_args()
     seeds = parse_seeds(args.seed, args.seeds)
 
-    if args.table28_profile or args.table28_scaffold:
-        profile = Table28PrepProfile(
+    if args.benchmark_profile or args.benchmark_scaffold:
+        profile = PhamWarinBenchmarkProfile(
             state_dim=2,
             particles=args.particles,
             steps=args.steps,
@@ -244,7 +245,7 @@ def main() -> None:
             seed=profile.seeds[0],
         )
         output = {
-            "table28_prep": True,
+            "benchmark_prep": True,
             "profile": asdict(profile),
             "systemic_risk_config": asdict(config),
             "training_template": asdict(training_template),
@@ -254,7 +255,7 @@ def main() -> None:
                 "cases": list(profile.cases),
                 "seeds": list(profile.seeds),
             },
-            "output_schema": table28_prep_output_schema(),
+            "output_schema": pham_warin_benchmark_output_schema(),
         }
         print(json.dumps(output, indent=2))
         return

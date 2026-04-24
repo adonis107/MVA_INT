@@ -44,12 +44,12 @@ class TrainingConfig:
 
 
 @dataclass(frozen=True)
-class Table28PrepProfile:
-    profile_name: str = "table28_prep_2d"
+class PhamWarinBenchmarkProfile:
+    profile_name: str = "pham_warin_2d_benchmark"
     state_dim: int = 2
     cases: tuple[str, ...] = ("case_1", "case_2", "case_3", "case_4", "case_5", "case_6")
     encoders: tuple[str, ...] = ("bins", "cylindrical")
-    algorithms: tuple[str, ...] = ("1", "6")
+    algorithms: tuple[str, ...] = ("global_dp", "global_bsde")
     seeds: tuple[int, ...] = (7, 13, 21)
     particles: int = 256
     steps: int = 20
@@ -57,7 +57,7 @@ class Table28PrepProfile:
     batch_size: int = 16
 
 
-def table28_prep_output_schema() -> dict[str, object]:
+def pham_warin_benchmark_output_schema() -> dict[str, object]:
     return {
         "profile": {
             "profile_name": "string",

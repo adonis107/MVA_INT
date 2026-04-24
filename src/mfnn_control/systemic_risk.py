@@ -148,6 +148,31 @@ def case_variance(case: str) -> float:
     return std**2 + sum((value - mean) ** 2 for value in means) / 3.0
 
 
+def case_variance_2d(case: str) -> float:
+    """Per-component variance for the 2D case, summed over both components."""
+    family_2d, params_2d = CASE_SPECS_2D[case]
+    if family_2d == "normal_2d":
+        _, std = params_2d
+        return 2.0 * std**2
+    if family_2d == "two_point_mixture_2d":
+        left_mean, right_mean, std = params_2d
+        total = 0.0
+        for dim in range(2):
+            lm, rm = left_mean[dim], right_mean[dim]
+            mean = 0.5 * (lm + rm)
+            total += std**2 + 0.5 * ((lm - mean) ** 2 + (rm - mean) ** 2)
+        return total
+    
+    left_mean, right_mean, std = params_2d
+    total = 0.0
+    for dim in range(2):
+        lm, rm = left_mean[dim], right_mean[dim]
+        means_per_dim = (lm, 0.0, rm)
+        mean = sum(means_per_dim) / 3.0
+        total += std**2 + sum((v - mean) ** 2 for v in means_per_dim) / 3.0
+    return total
+
+
 def solve_riccati(config: SystemicRiskConfig, *, grid_size: int = 4096) -> tuple[Tensor, Tensor]:
     dt = config.horizon / grid_size
     times = torch.linspace(config.horizon, 0.0, grid_size + 1)
@@ -174,8 +199,12 @@ def systemic_risk_value(case: str, config: SystemicRiskConfig) -> float:
     times, q_values = solve_riccati(config)
     dt = times[1] - times[0]
     integral = torch.trapz(q_values, dx=dt)
-    scalar_value = q_values[0] * case_variance(case) + config.sigma**2 * integral
-    return float(config.state_dim * scalar_value)
+    if config.state_dim == 2:
+        variance = case_variance_2d(case)
+    else:
+        variance = case_variance(case)
+    scalar_value = q_values[0] * variance + config.state_dim * config.sigma**2 * integral
+    return float(scalar_value)
 
 
 def systemic_risk_running_cost(states: Tensor, actions: Tensor, config: SystemicRiskConfig) -> Tensor:
