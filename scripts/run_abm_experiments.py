@@ -49,6 +49,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--n-grid", default="10,30,100,300,1000")
     parser.add_argument("--q-grid", default="0.4,0.6,0.8,1.0,1.2")
+    parser.add_argument("--phase-q-min", type=float, default=0.0)
+    parser.add_argument("--phase-q-max", type=float, default=2.0)
+    parser.add_argument("--phase-q-steps", type=int, default=21)
+    parser.add_argument("--phase-sigma", type=float, default=0.1)
+    parser.add_argument("--phase-threshold", type=float, default=0.0)
+    parser.add_argument("--phase-initial-mean", type=float, default=0.5)
+    parser.add_argument("--phase-horizon", type=float, default=1.0)
+    parser.add_argument("--phase-steps", type=int, default=100)
+    parser.add_argument("--phase-stress-fraction", type=float, default=0.1)
+    parser.add_argument("--phase-stress-value", type=float, default=-5.0)
     return parser.parse_args()
 
 
@@ -296,6 +306,70 @@ def experiment_3_limit_breakdown(
     return {"vs_N": by_n, "vs_q": by_q}
 
 
+def experiment_4_phase_transition(
+    base_config: ABMConfig,
+    agents: int,
+    q_sweep: list[float],
+    case: str,
+    mc_paths: int,
+    state_dim: int,
+    device: str,
+    policy: torch.nn.Module,
+    phase_sigma: float = 0.1,
+    phase_threshold: float = 0.0,
+    phase_initial_mean: float = 0.5,
+    phase_horizon: float = 1.0,
+    phase_steps: int = 100,
+    phase_stress_fraction: float = 0.1,
+    phase_stress_value: float = -5.0,
+) -> dict[str, object]:
+    weights = homogeneous_graph_weights(agents, device=device)
+    n_stressed = max(1, int(agents * phase_stress_fraction))
+    n_healthy = agents - n_stressed
+    uncontrolled = []
+    controlled = []
+    for q in q_sweep:
+        cfg = ABMConfig(
+            horizon=phase_horizon,
+            steps=phase_steps,
+            sigma=phase_sigma,
+            interaction_q=q,
+            state_dim=state_dim,
+            default_threshold=phase_threshold,
+        )
+        healthy = torch.randn(mc_paths, n_healthy, state_dim, device=device) * 0.05 + phase_initial_mean
+        stressed = torch.randn(mc_paths, n_stressed, state_dim, device=device) * 0.05 + phase_stress_value
+        x0 = torch.cat([healthy, stressed], dim=1)
+        initial_defaulted = (x0 < cfg.default_threshold).any(dim=-1)
+        sim_unc = rollout_abm(x0, cfg, weights, policy=None)
+        sim_ctl = rollout_abm(x0, cfg, weights, policy=policy)
+        unc_add = (sim_unc.defaulted.float().sum(dim=1) - initial_defaulted.float().sum(dim=1)).clamp_min(0.0)
+        ctl_add = (sim_ctl.defaulted.float().sum(dim=1) - initial_defaulted.float().sum(dim=1)).clamp_min(0.0)
+        uncontrolled.append({
+            "q": float(q),
+            "cascade_rate": float((unc_add > 0).float().mean().item()),
+            "mean_cascade_size": float(unc_add.mean().item()),
+            "cascade_size_distribution": [float(v) for v in unc_add.cpu().tolist()],
+        })
+        controlled.append({
+            "q": float(q),
+            "cascade_rate": float((ctl_add > 0).float().mean().item()),
+            "mean_cascade_size": float(ctl_add.mean().item()),
+            "cascade_size_distribution": [float(v) for v in ctl_add.cpu().tolist()],
+        })
+    unc_rates = [row["cascade_rate"] for row in uncontrolled]
+    ctl_rates = [row["cascade_rate"] for row in controlled]
+    half = 0.5
+    critical_q_unc = next((q_sweep[i] for i, r in enumerate(unc_rates) if r >= half), None)
+    critical_q_ctl = next((q_sweep[i] for i, r in enumerate(ctl_rates) if r >= half), None)
+    return {
+        "uncontrolled": uncontrolled,
+        "controlled": controlled,
+        "critical_q_uncontrolled": critical_q_unc,
+        "critical_q_controlled": critical_q_ctl,
+    }
+
+
 def run_all_experiments(args: argparse.Namespace) -> dict[str, object]:
     torch.manual_seed(args.seed)
     device = args.device
@@ -358,6 +432,24 @@ def run_all_experiments(args: argparse.Namespace) -> dict[str, object]:
         device,
         policy,
     )
+    phase_q_sweep = torch.linspace(args.phase_q_min, args.phase_q_max, args.phase_q_steps).tolist()
+    exp4 = experiment_4_phase_transition(
+        calibrated_config,
+        args.agents,
+        phase_q_sweep,
+        args.case,
+        args.mc_paths,
+        args.state_dim,
+        device,
+        policy,
+        phase_sigma=args.phase_sigma,
+        phase_threshold=args.phase_threshold,
+        phase_initial_mean=args.phase_initial_mean,
+        phase_horizon=args.phase_horizon,
+        phase_steps=args.phase_steps,
+        phase_stress_fraction=args.phase_stress_fraction,
+        phase_stress_value=args.phase_stress_value,
+    )
     return {
         "config": {
             "args": vars(args),
@@ -368,6 +460,7 @@ def run_all_experiments(args: argparse.Namespace) -> dict[str, object]:
         "experiment_1_uncontrolled": exp1,
         "experiment_2_controlled": exp2,
         "experiment_3_limit_breakdown": exp3,
+        "experiment_4_phase_transition": exp4,
     }
 
 

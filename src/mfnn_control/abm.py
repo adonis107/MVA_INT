@@ -75,7 +75,7 @@ def erdos_renyi_graph_weights(
         raise ValueError("edge_probability must be in [0, 1]")
     generator = None
     if seed is not None:
-        generator = torch.Generator(device="cpu")
+        generator = torch.Generator(device=device)
         generator.manual_seed(seed)
     upper = torch.rand((agents, agents), generator=generator, device=device, dtype=dtype)
     upper = torch.triu((upper < edge_probability).to(dtype=dtype), diagonal=1)
