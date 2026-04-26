@@ -44,6 +44,94 @@ Fotios KAPOTOS \email{fotiskapotos@gmail.com}
 % ==============================================================================
 \section{Introduction and Contributions}
 
+\citet{pham2024mfnn} introduce mean-field neural networks (MFNNs) to solve McKean-Vlasov (MKV) control problems: as the population size $N \to \infty$, propagation of chaos \citep{sznitman1991propagation} yields a single controlled MKV SDE whose optimal policy maps a probability measure to a control action, requiring architectures that operate on $\PPP_2(\RR)$, the Wasserstein space of probability measures with finite second moment. The paper proposes bin-density and cylindrical encoders and eight training algorithms, validated on the linear-quadratic systemic risk benchmark of \citet{carmona2015systemic} against an exact Riccati solution.
+
+This project aims to address what happens when a policy learned under the mean-field hypothesis is deployed on a finite, structurally heterogeneous network. The MF limit assumes an infinite exchangeable population on a complete interaction graph; real financial systems violate both. Once these assumptions are relaxed, cascading defaults emerge as a collective phenomenon whose statistics are invisible in the smooth MF cost functional. This places the project at the intersection of interacting particle systems, agent-based models, and extreme-event theory: the finite discrete system exhibits a phase transition in the inter-bank coupling $q$, with power-law cascade-size distributions near the critical point $q^*$. Network heterogeneity is modelled via a graphon \citep{lovasz2012large}, replacing the complete graph with core-periphery or Erdős-Rényi structures.
+
+Our contributions are: (i) a faithful implementation of Algorithms 1 (global DP) and 6 (global BSDE) with both encoders, validated against the Riccati benchmark on all six initial distributions; (ii) an empirical characterisation of the MF-limit breakdown as $N$ grows from 10 to 1000 across three topologies; (iii) a phase-transition analysis quantifying the policy-induced shift $\Delta q^* > 0$ in the critical coupling; and (iv) an out-of-distribution robustness evaluation of the frozen policy on unseen initial laws and heterogeneous graphs.
+
+% ==============================================================================
+% SECTION : PAPER OVERVIEW
+% ==============================================================================
+\section{Paper Overview}
+
+\citet{pham2024mfnn} address the numerical solution of McKean-Vlasov control (MKV) problems, which arise as the cooperative mean-field limit of $N$-agent stochastic systems. The controlled state evolves as
+\begin{equation}\label{eq:mkv-sde-main}
+  \dd X_t = b(X_t, \PP_{X_t}, \alpha_t)\,\dd t + \sigma(X_t, \PP_{X_t})\,\dd W_t, \qquad X_0 \sim \mu_0,
+\end{equation}
+and the social planner minimises
+\begin{equation}\label{eq:mkv-cost-main}
+  v(\mu_0) = \inf_\alpha \EE\!\left[\int_0^T f(X_t, \PP_{X_t}, \alpha_t)\,\dd t + g(X_T, \PP_{X_T})\right].
+\end{equation}
+The fundamental difficulty is representational: both $v$ and the optimal feedback $\alpha^*(t, x, \mu)$ are defined on $\PPP_2(\RR^d)$, making standard finite-dimensional networks inapplicable. From the perspective of the Interactions course, \eqref{eq:mkv-sde-main} is precisely the continuum limit of an IPS: under propagation of chaos \citep{sznitman1991propagation}, the $N$-particle system decouples as $N \to \infty$, with each agent governed by a nonlinear SDE whose coefficients depend self-consistently on the law of its own solution.
+
+\textbf{Mean-field neural network architectures.} The paper introduces two architectures that lift standard feedforward networks to measure-valued inputs. The \emph{bin-density encoder} discretises $\mu$ on a fixed grid $\mathcal{K}$ into $K$ bins, producing a normalised histogram $p^\mu \in \RR^K$; the policy network is $\Phi_\theta(t, x, p^\mu)$. The \emph{cylindrical encoder} computes a learnable moment embedding
+\begin{equation}\label{eq:cylindrical-main}
+  z = \frac{1}{N}\sum_{n=1}^N \varphi_\theta(X^{(n)}) \in \RR^q
+\end{equation}
+via an inner network $\varphi_\theta$, passed to an outer network $\Psi_\theta(t, x, z)$. Both are permutation-invariant and satisfy a universal approximation theorem on $\PPP_2(\RR^d)$.
+
+\textbf{Training algorithms.} The paper proposes eight algorithms in two families. Algorithm 1 (global Dynamic Programming) minimises $\hat{J}(\theta)$ end-to-end by differentiating through the Euler simulation of \eqref{eq:mkv-sde-main}. Algorithms 4-8 exploit the FBSDE characterisation derived from the Pontryagin maximum principle: setting $Y_t = V(t, X_t, \PP_{X_t})$ (the value function along the optimal trajectory) and $Z_t = \sigma^\top \partial_x V(t, X_t, \PP_{X_t})$, the backward equation reads
+\begin{equation}\label{eq:bsde-main}
+  \dd Y_t = -f(X_t, \PP_{X_t}, \alpha^*_t)\,\dd t + Z_t\,\dd W_t, \qquad Y_T = g(X_T, \PP_{X_T}),
+\end{equation}
+and the control is recovered via the adjoint $P_t = \mathcal{U}(t, X_t, \PP_{X_t}) = \partial_x V + \EE_{\xi \sim \PP_{X_t}}[\partial_\mu V(\cdot)(X_t)]$ as $\alpha^* = \hat{a}(X_t, \PP_{X_t}, P_t)$. Algorithm 6 (global BSDE) learns $(Y, Z)$ jointly over all time steps by minimising the terminal residual $\EE[\|Y_T - g(X_T, \PP_{X_T})\|^2]$.
+
+We focus on Algorithms 1 and 6 because they are the canonical representatives of their respective families at global scope: both train a single network over all time steps simultaneously, avoiding the compounding errors of the sequential (local) variants. Algorithm 1 is the simplest baseline and stress-tests the DP approach; Algorithm 6 provides the BSDE alternative grounded in the Pontryagin principle. The paper itself reports that these two are the most accurate algorithms on the 1D systemic risk benchmark, and their structural symmetry (same training scope, different optimality characterisation) makes the comparison informative.
+
+\textbf{Systemic risk benchmark.} Validation uses the LQ systemic risk model of \citet{carmona2015systemic}: the log-monetary reserve of a representative bank satisfies
+\begin{equation}\label{eq:systemic-main}
+  \dd X_t = \bigl(\kappa(\EE[X_t] - X_t) + \alpha_t\bigr)\,\dd t + \sigma\,\dd W_t,
+\end{equation}
+with cost $\tilde{f}(x,\bar x, a) = \tfrac{1}{2}a^2 - qa(\bar x - x) + \tfrac{\eta}{2}(\bar x - x)^2$ and terminal cost $\tilde{g}(x,\bar x) = \tfrac{c}{2}(x - \bar x)^2$. This model is chosen to be relevant on three counts: (i) it is an IPS with all-to-all coupling whose MF limit is \eqref{eq:systemic-main}; (ii) the finite-$N$ system produces cascading defaults, an emergent phenomenon invisible in the smooth MF cost; and (iii) the LQ structure admits an exact Riccati solution $v(t,\mu) = Q_t \int(x-\bar\mu)^2\,\mu(\dd x) + \sigma^2\int_t^T Q_s\,\dd s$, providing ground-truth for validation.
+
+
+
+% ==============================================================================
+% SECTION : METHODOLOGY
+% ==============================================================================
+\section{Methodology}
+
+
+
+% ==============================================================================
+% SECTION : DATA AND EXPERIMENTAL SETUP
+% ==============================================================================
+\section{Data and Experimental Setup}
+
+
+
+% ==============================================================================
+% SECTION : RESULTS
+% ==============================================================================
+\section{Results}
+
+
+
+% ==============================================================================
+% SECTION : CONCLUSION AND DISCUSSION
+% ==============================================================================
+\section{Conclusion and Discussion}
+
+
+
+% ==============================================================================
+% SECTION : BIBLIOGRAPHY
+% ==============================================================================
+\bibliographystyle{plainnat}
+\bibliography{bibliography}
+
+
+
+% ==============================================================================
+% SECTION : APPENDIX
+% ==============================================================================
+\newpage
+\appendix
+
+% ------------------------------------------------------------------------------
+% APPENDIX A : McKean-Vlasov Control
+% ------------------------------------------------------------------------------
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
@@ -135,59 +223,6 @@ Fotios KAPOTOS \email{fotiskapotos@gmail.com}
 \end{figure}
 
 
-
-% ==============================================================================
-% SECTION : PAPER OVERVIEW
-% ==============================================================================
-\section{Paper Overview}
-
-
-
-% ==============================================================================
-% SECTION : METHODOLOGY
-% ==============================================================================
-\section{Methodology}
-
-
-
-% ==============================================================================
-% SECTION : DATA AND EXPERIMENTAL SETUP
-% ==============================================================================
-\section{Data and Experimental Setup}
-
-
-
-% ==============================================================================
-% SECTION : RESULTS
-% ==============================================================================
-\section{Results}
-
-
-
-% ==============================================================================
-% SECTION : CONCLUSION AND DISCUSSION
-% ==============================================================================
-\section{Conclusion and Discussion}
-
-
-
-% ==============================================================================
-% SECTION : BIBLIOGRAPHY
-% ==============================================================================
-\bibliographystyle{plainnat}
-\bibliography{bibliography}
-
-
-
-% ==============================================================================
-% SECTION : APPENDIX
-% ==============================================================================
-\newpage
-\appendix
-
-% ------------------------------------------------------------------------------
-% APPENDIX A : McKean-Vlasov Control
-% ------------------------------------------------------------------------------
 \section{McKean--Vlasov Control Problem}\label{sec:appendix-mkv}
 
 We recall the general framework for mean-field control (MFC), also called McKean--Vlasov (MKV) control, following the formulation of \citet{pham2024mfnn}.
