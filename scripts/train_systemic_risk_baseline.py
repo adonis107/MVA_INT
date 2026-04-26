@@ -305,8 +305,8 @@ def main() -> None:
             "particles": args.particles,
             "steps": args.steps,
             "seeds": seeds,
-            "algorithm_1": run_algorithm_over_seeds("1", args, seeds),
-            "algorithm_6": run_algorithm_over_seeds("6", args, seeds),
+            "algorithm_1": run_algorithm_over_seeds("global_dp", args, seeds),
+            "algorithm_6": run_algorithm_over_seeds("global_bsde", args, seeds),
             "value_tolerance": args.value_tolerance,
         }
         print(json.dumps(output, indent=2))

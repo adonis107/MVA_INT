@@ -12,6 +12,9 @@
 \usepackage{algorithmicx}
 \usepackage{algpseudocode}
 
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta}
+
 % Document parameters
 % Document title
 \title{Interactions - MVA 2025/2026
@@ -40,6 +43,96 @@ Fotios KAPOTOS \email{fotiskapotos@gmail.com}
 % SECTION : INTRODUCTION AND CONTRIBUTIONS
 % ==============================================================================
 \section{Introduction and Contributions}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={
+    rectangle, rounded corners=5pt,
+    minimum width=12cm, text width=11.6cm,
+    draw, line width=0.8pt,
+    inner sep=7pt, align=left
+  },
+  arr/.style={-Stealth, line width=1.2pt, shorten >=3pt, shorten <=3pt},
+  steplabel/.style={midway, fill=white, inner sep=2pt, font=\scriptsize\itshape}
+]
+
+\node[box, fill=blue!8, draw=blue!50] (s1) {
+  \textbf{[1]\;Financial Network}\enspace---\enspace
+  $N$ banks, each with log-monetary reserve $X^{i,N}_t$.
+  Interactions are heterogeneous: inter-bank influence is encoded by a
+  \emph{core-periphery graphon} $G:[0,1]^2\!\to\![0,1]$, with core banks ($u<p$)
+  tightly coupled and peripheral banks weakly coupled.
+  Each bank $i$ borrows or lends at rate $\alpha^{i,N}_t$ to stabilise the system.
+};
+
+\node[box, fill=orange!8, draw=orange!50, below=0.65cm of s1] (s2) {
+  \textbf{[2]\;Mean-Field Limit ($N\!\to\!\infty$)}\enspace---\enspace
+  By a \emph{propagation of chaos} argument (Coppini--De Crescenzo--Pham, 2025), the
+  discrete system converges to a continuum of controlled McKean--Vlasov SDEs indexed
+  by label $u\!\in\![0,1]$:
+  $\mathrm{d}X^u_t = \bigl(\kappa(\langle\mu^u_t,\mathrm{id}\rangle-X^u_t)+\alpha^u_t\bigr)\mathrm{d}t
+  +\sigma\,\mathrm{d}W^u_t$,
+  where $\mu^u_t$ is the graphon-weighted law of $u$'s neighbours.
+  A social planner minimises
+  $J(\boldsymbol\alpha) = \int_0^1 r(u)\,\mathbb{E}[\int_0^T\! f\,\mathrm{d}t + g]\,\mathrm{d}u$.
+};
+
+\node[box, fill=violet!8, draw=violet!50, below=0.65cm of s2] (s3) {
+  \textbf{[3]\;Mean-Field Neural Networks}\enspace---\enspace
+  \emph{Key challenge}: the optimal policy $\alpha^*(t,x,u,\mu^u)$ takes a
+  \emph{probability measure} as input --- an $\infty$-dimensional object.
+  \emph{Solution}: encode the particle cloud $\{X^{j}\}_{j=1}^N$ as a finite vector
+  via either (a)~a \textbf{bin-density encoder}
+  (empirical histogram $p^\mu\!\in\!\mathbb{R}^K$ over a fixed grid)
+  or (b)~a \textbf{cylindrical encoder}
+  ($z = \tfrac{1}{N}\sum_j\varphi_\theta(X^j)\!\in\!\mathbb{R}^q$,
+  empirical average of a trainable inner network).
+  The policy network is then $\alpha^* = \Phi_\theta(t,\,x,\,u,\,z)$.
+};
+
+\node[box, fill=teal!8, draw=teal!50, below=0.65cm of s3] (s4) {
+  \textbf{[4]\;Training Algorithms}\enspace---\enspace
+  \textbf{Algorithm~1 (Global DP):} simulate the Euler-discretised particle system
+  forward; backpropagate through all time steps to minimise the empirical cost
+  $\hat J(\theta)$ directly.
+  \textbf{Algorithm~6 (Global BSDE):} learn the adjoint
+  $Y_t\!\approx\!V(t,X^u_t,\mu^u_t)$ and its volatility $Z_t$ by minimising the
+  BSDE terminal residual
+  $\mathbb{E}[\lVert Y_T - g(X_T,\mu_T)\rVert^2]$;
+  recover the control as $\alpha^* = q(\bar\mu - x) - Y_t$.
+};
+
+\node[box, fill=green!8, draw=green!50, below=0.65cm of s4] (s5) {
+  \textbf{[5]\;Output \& Validation}\enspace---\enspace
+  The trained network $\mathcal{N}_\theta^*$ produces a feedback law
+  $\alpha^*(t,x,u,\mu^u)$ valid for \emph{any} initial distribution $\mu_0$.
+  \emph{Homogeneous benchmark} ($G\!\equiv\!1$, Pham--Warin cases~1--6):
+  compare the estimated cost against the exact \textbf{Riccati analytical solution}.
+  \emph{Heterogeneous benchmark}: validate via \textbf{agent-based model (ABM)}
+  simulations on a finite core-periphery bank network.
+};
+
+\draw[arr] (s1.south) -- node[steplabel] {$N\to\infty$, propagation of chaos} (s2.north);
+\draw[arr] (s2.south) -- node[steplabel] {value function on $L^2_\lambda(\mathcal{P}_2(\mathbb{R}))$; represent $\mu$ as a finite vector} (s3.north);
+\draw[arr] (s3.south) -- node[steplabel] {gradient descent on parameters $\theta$} (s4.north);
+\draw[arr] (s4.south) -- node[steplabel] {converged network $\mathcal{N}_\theta^*$} (s5.north);
+
+\end{tikzpicture}
+\caption{%
+  End-to-end project pipeline.
+  \textbf{Blue}~[1]: agent-based financial system with graphon-structured heterogeneous interactions.
+  \textbf{Orange}~[2]: McKean--Vlasov mean-field formulation obtained as the $N\to\infty$ limit.
+  \textbf{Purple}~[3]: mean-field neural network architectures that map a probability measure
+  (infinite-dimensional input) to a finite-dimensional representation.
+  \textbf{Teal}~[4]: two training strategies --- dynamic programming (Algorithm~1) and
+  backward SDE (Algorithm~6) --- from \citet{pham2024mfnn}.
+  \textbf{Green}~[5]: output feedback policy and validation against exact analytical
+  and agent-based simulation benchmarks.
+}
+\label{fig:pipeline}
+\end{figure}
 
 
 

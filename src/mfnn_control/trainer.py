@@ -173,4 +173,4 @@ def evaluate_global_bsde_policy(
 
     policy = InducedPolicy()
     simulation = simulate_systemic_risk(policy, initial_states, config)
-    return config.dt * simulation.running_costs.mean(dim=(1, 2, 3)).sum() + simulation.terminal_cost.mean()
+    return config.dt * simulation.running_costs.sum(dim=-1).mean(dim=(1, 2)).sum() + simulation.terminal_cost.sum(dim=-1).mean()

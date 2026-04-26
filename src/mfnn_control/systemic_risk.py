@@ -17,10 +17,10 @@ CASE_SPECS: dict[str, tuple[str, tuple[float, ...]]] = {
     "case_6": ("three_point_mixture", (-0.3, 0.3, 0.07)),
 }
 
-CASE_SPECS_2D: dict[str, tuple[str, tuple[tuple[float, float], ...] | tuple[tuple[float, float], float] | tuple[tuple[float, float], tuple[float, float], float]]] = {
+CASE_SPECS_2D: dict = {
     "case_1": ("normal_2d", ((0.0, 0.0), 0.2)),
-    "case_2": ("normal_2d", ((0.3, 0.3), 0.05)),
-    "case_3": ("normal_2d", ((0.0, 0.0), 0.05)),
+    "case_2": ("two_point_mixture_2d", ((0.0, 0.0), (0.5, 0.5), 0.15)),
+    "case_3": ("three_point_mixture_2d_weighted", ((-0.05, -0.05), (0.0, 0.0), (0.5, 0.5), 0.05, (0.4, 0.4, 0.2))),
     "case_4": ("two_point_mixture_2d", ((-3.0**0.5 / 10.0, -3.0**0.5 / 10.0), (3.0**0.5 / 10.0, 3.0**0.5 / 10.0), 0.1)),
     "case_5": ("two_point_mixture_2d", ((-0.25, -0.25), (-0.25, -0.25), 0.1)),
     "case_6": ("three_point_mixture_2d", ((-0.3, -0.3), (0.3, 0.3), 0.07)),
@@ -72,6 +72,22 @@ def sample_initial_states_with_dim(
             left = left_vec + std * torch.randn(batch_size, particles, 2, device=device, dtype=dtype)
             right = right_vec + std * torch.randn(batch_size, particles, 2, device=device, dtype=dtype)
             return torch.where(selector, right, left)
+        if family_2d == "three_point_mixture_2d_weighted":
+            m1, m2, m3, std, probs = params_2d
+            weights = torch.tensor(list(probs), device=device, dtype=dtype)
+            cat_indices = torch.multinomial(
+                weights.unsqueeze(0).expand(batch_size * particles, -1),
+                num_samples=1,
+            ).view(batch_size, particles, 1)
+            m1_vec = torch.tensor(m1, device=device, dtype=dtype).view(1, 1, 2)
+            m2_vec = torch.tensor(m2, device=device, dtype=dtype).view(1, 1, 2)
+            m3_vec = torch.tensor(m3, device=device, dtype=dtype).view(1, 1, 2)
+            means = torch.where(
+                cat_indices == 0, m1_vec.expand(batch_size, particles, 2),
+                torch.where(cat_indices == 1, m2_vec.expand(batch_size, particles, 2),
+                            m3_vec.expand(batch_size, particles, 2)),
+            )
+            return means + std * torch.randn(batch_size, particles, 2, device=device, dtype=dtype)
         left_mean, right_mean, std = params_2d
         categories = torch.randint(0, 3, (batch_size, particles, 1), device=device)
         left_vec = torch.tensor(left_mean, device=device, dtype=dtype).view(1, 1, 2)
@@ -162,7 +178,19 @@ def case_variance_2d(case: str) -> float:
             mean = 0.5 * (lm + rm)
             total += std**2 + 0.5 * ((lm - mean) ** 2 + (rm - mean) ** 2)
         return total
-    
+    if family_2d == "three_point_mixture_2d_weighted":
+        m1, m2, m3, std, probs = params_2d
+        p1, p2, p3 = probs
+        total = 0.0
+        for dim in range(2):
+            means_dim = (m1[dim], m2[dim], m3[dim])
+            mean = p1 * means_dim[0] + p2 * means_dim[1] + p3 * means_dim[2]
+            total += (std**2
+                      + p1 * (means_dim[0] - mean) ** 2
+                      + p2 * (means_dim[1] - mean) ** 2
+                      + p3 * (means_dim[2] - mean) ** 2)
+        return total
+    # three_point_mixture_2d with equal weights (cases 4–6)
     left_mean, right_mean, std = params_2d
     total = 0.0
     for dim in range(2):
@@ -183,7 +211,7 @@ def solve_riccati(config: SystemicRiskConfig, *, grid_size: int = 4096) -> tuple
     for index in range(grid_size):
         current_q = q_values[index]
         derivative = -(2.0 * current_q.square() + 2.0 * linear_term * current_q - source)
-        q_values[index + 1] = current_q - dt * derivative
+        q_values[index + 1] = current_q + dt * derivative
     return times.flip(0), q_values.flip(0)
 
 
@@ -283,8 +311,8 @@ def simulate_systemic_risk(
 
 def policy_loss(policy: nn.Module, initial_states: Tensor, config: SystemicRiskConfig) -> Tensor:
     simulation = simulate_systemic_risk(policy, initial_states, config)
-    running_term = config.dt * simulation.running_costs.mean(dim=(1, 2, 3)).sum()
-    terminal_term = simulation.terminal_cost.mean()
+    running_term = config.dt * simulation.running_costs.sum(dim=-1).mean(dim=(1, 2)).sum()
+    terminal_term = simulation.terminal_cost.sum(dim=-1).mean()
     return running_term + terminal_term
 
 
